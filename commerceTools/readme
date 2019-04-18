@@ -1,0 +1,195 @@
+Project overview:
+-----------------
+An online shop and we would like to provide for all available products the stock data. Additionally
+for analytic reasons, we also want to keep track on some basic statistics.
+
+we have the below 3 service:
+
+POST /updateStock
+This endpoint updates the current stock of a particular product.
+The JSON body you can put:
+{
+	"id": “string", // unique string to identify the stock, e.g. "000001"
+	"timestamp": “dateTime" // datetime in UTC, e.g. "2017-07-16T22:54:01.754Z"
+	"productId": “string", // unique id to identify the products, e.g. "vegetable-123"
+	"quantity": “integer" // amount of available stock, e.g. 500
+}
+You get in return:
+status-code 201 ... everything went well and the new entry for stock was accepted
+status-code 204 ... outdated stock, because a newer stock was processed first
+
+
+GET /stock?productId=vegetable-123
+If you send a request towards this endpoint, you get the current stock available of a particular
+product.
+The format of the JSON body you should get back:
+{
+	"productId": “string", // id of the requested product, e.g. "vegetable-123"
+	"requestTimestamp": “dateTime", // datetime in UTC when requested the stock
+	"stock": {
+		"id": "string",
+		"timestamp": "dateTime"
+		"quantity": "integer"
+	}
+}
+
+GET /statistics?time=[today,lastMonth]
+When calling this endpoint, we want to receive some statistics about our stocks back. The
+available timespans are today (midnight until now) and last month.
+The format of the JSON body you should get back:
+{
+	"requestTimestamp": “dateTime", // datetime in UTC when requested the stock
+	"range": “string", // valid values are "today" and "lastMonth"
+	"topAvailableProducts": [ // top three products with the highest availability
+	{
+		"id": "string",
+		"timestamp": "dateTime"
+		"productId": "string",
+		"quantity": "integer"
+	},
+	{
+		"id": "string",
+		"timestamp": "dateTime"
+		"productId": "string",
+		"quantity": "integer"
+	},
+	{
+		"id": "string",
+		"timestamp": "dateTime"
+		"productId": "string",
+		"quantity": "integer"
+	}
+	],
+	"topSellingProducts": [
+		{
+		"productId": "string",
+		"itemsSold": "integer" // number of products sold within given range
+		},
+		{
+		"productId": "string",
+		"itemsSold": "integer" // number of products sold within given range
+		},
+		{
+		"productId": "string",
+		"itemsSold": "integer" // number of products sold within given range
+		}
+	]
+}
+
+Source code
+--------------
+	Git Repository - https://github.com/hhamaky/commerceTools
+	Docker Image - https://hub.docker.com/r/hhamaky/stock-handling/
+
+Technology Stack
+-----------------
+- Java 8
+- Spring boot/MVC
+- H2 in memory database
+- JPA / Spring Data
+- Docker
+- Swagger for documentation
+- Junit/Mockito/SpringRunner
+- Modelmapper for mapping objects
+- Maven
+- Postman.
+
+How to run using IDE ?
+-------------------------
+1- Import the project in your favorite IDE as a maven project.
+2- Build you application by running maven install.
+3- Run com.commercetools.stockHandlingTask.StockHandlingTaskApplication to start the spring boot application.
+4- Navigate to http://localhost:8080/swagger-ui.html to see the available endpoints.
+
+How to run using Docker?
+-------------------------
+1- pull the docker image "docker pull hhamaky/stock-handling"
+2- run command "docker run -d -p 8181:8080 hhamaky/stock-handling"
+
+    To get ip of docker container: "docker inspect --format '{{ .NetworkSettings.IPAddress }}' container_name_or_id"
+    To list all active container:  "docker container ls -a"
+    To check docker logs:          "docker container logs"
+
+How to test?
+---------------
+1- H2 database is already initialized with some test data.
+2- You can modify data in the file "\src\main\resources\data.sql"
+3- Use postman or any tool to test the 3 rest endpoints below
+    POST localhost:8181/updateStock
+    GET localhost:8181/stock?productId=Iphone10
+    GET localhost:8181/statistics?time=today or localhost:8181/statistics?time=lastMonth
+4- You can run unit tests using the IDE or using maven test command.
+
+Design Notes
+----------------
+- How you handle concurrent request against one endpoint?
+Concurrency in handled by the comparision of the new request timestamp with the last stock update request timestamp explained briefly in the next note.
+
+- Is the backend always in a valid state? - What about Race conditions?
+yes. always in valid state, no race conditions.
+A race condition occurs when two or more threads can access shared data and they try to change it at the same time.
+In our application,
+    - A problem might exist as we might receive concurrent requests trying to update the stock of a particular product at the same time.
+    This is prevented in our application by the comparision of the requestTimestamp and the last timestamp of the last stock change,
+    request timestamp must be later to ensure that no other request changed the stock level.
+    - Another problem might occur in getCurrentStock request, and this is also prevented by the request timestamp comparison by retrieving the stock
+    quantity directly before the request timestamp.
+Optimistic lock is achieved by adding version column in database and JPA handles the rest.
+
+- Did you thought about some edge cases?
+In GetCurrentStock service
+    - A case of product not found in database, in that case the application throw ProductNotFoundException and returns status code 400 NotFound.
+
+In updateStock Service
+    - A case of an outdated stock, request is outdated as request timestamp is older than the latest stock entry.
+    OutdatedStockRequestException is thrown in that with response code 204.
+    - A case of an update stock request but with the same stock id which should be unique,
+    in that case application throws StockEntryExistsException with response code 400 Bad Request.
+
+In getStatistics Service
+    - A case that invalid range is sent (Valid ranges are today or last month),
+    in that case InvalidRangeException is thrown  with response code 400 Bad Request.
+
+In any other exception , we return error code 500.
+
+
+Database Note
+---------------
+We have one Stock table in the h2 in memory database.
+All of the stock update requests are stored in database , we can think of it as an activity log table.
+All of the statistics required are done through calculations on that table.
+
+General Notes
+---------------
+
+Exception Handling
+The application is using customized exception handler class (CustomizedResponseEntityExceptionHandler.java) extending abstract class ResponseEntityExceptionHandler
+provided by spring framework to centralize and provide default exception handling across all the different exception handler methods.
+In Order to apply it on all of our controllers , it is annotated with @ControllerAdvice to be shared across multiple controller classes.
+
+
+To open H2 database follow the below URL
+http://hostname:port/h2-console -> locally http://localhost:8080/h2-console
+Setting are:
+    -Saved Settings: Generic H2
+    -Setting Name: Generic H2
+    -Driver Class: org.h2.Driver
+    -jdbc URL: jdbc:h2:mem:testdb
+    -User Name: sa
+    -Password:
+
+Swagger Documentation:
+http://localhost:8080/v2/api-docs
+http://localhost:8080/swagger-ui.html
+
+Since we are using H2 in memory database , we didn't have the need to use docker-compose
+
+
+Future Enhancements:
+------------------------
+-More edge cases to be investigated and handled.
+-Localization for the error messages.
+-Using a framework to handle cross logging for requests (for example: AspectJ)
+-Using ELK for logs monitoring and doing needed statistics from logs.
+-Circuit breaker for failure detection and to provide stability.
+-Integration tests between application layers.
